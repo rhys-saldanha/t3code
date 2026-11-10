@@ -9,6 +9,7 @@ import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as Schema from "effect/Schema";
 
 import * as ProcessRunner from "../processRunner.ts";
 import { sourceControlDefinitions } from "../sourceControl/sourceControlDefinitions.ts";
@@ -131,6 +132,38 @@ function buildRepositoryIdentity(input: {
     ...(origin ? { origin } : {}),
   };
 }
+
+// A folder that git cannot identify (no repository, or no non-local remote) can declare the
+// remote it stands for in `.t3.project`, e.g. {"remote": "https://github.com/owner/repo.git"}.
+// Git always wins, so a real checkout never takes a locator its own remotes cannot back.
+const PROJECT_FILE_NAME = ".t3.project";
+const PROJECT_FILE_REMOTE_NAME = "t3-project";
+const decodeProjectFile = Schema.decodeUnknownOption(
+  Schema.fromJsonString(Schema.Struct({ remote: Schema.String })),
+);
+
+const readProjectFileIdentity = Effect.fn("RepositoryIdentityResolver.readProjectFile")(function* (
+  cwd: string,
+) {
+  const fileSystem = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const contents = yield* fileSystem
+    .readFileString(path.join(cwd, PROJECT_FILE_NAME))
+    .pipe(Effect.option);
+  if (contents._tag === "None") return null;
+
+  const parsed = decodeProjectFile(contents.value);
+  if (parsed._tag === "None") return null;
+  const remoteUrl = parsed.value.remote.trim();
+  if (remoteUrl.length === 0 || isLocalRemoteUrl(remoteUrl)) return null;
+
+  return buildRepositoryIdentity({
+    remoteName: PROJECT_FILE_REMOTE_NAME,
+    remoteUrl,
+    originUrl: undefined,
+    rootPath: cwd,
+  });
+});
 
 class RepositoryIdentityCacheKey extends Data.Class<{
   readonly rootPath: string;
@@ -290,13 +323,31 @@ export const make = Effect.fn("RepositoryIdentityResolver.make")(function* (
     { capacity: cacheCapacity, timeToLive },
   );
 
+  const projectFileIdentityCache = yield* Cache.makeWith<string, RepositoryIdentity | null>(
+    (cwd) =>
+      readProjectFileIdentity(cwd).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.flatMap((identity) =>
+          identity === null
+            ? Effect.succeed(null)
+            : refine(identity).pipe(Effect.orElseSucceed(() => identity)),
+        ),
+      ),
+    { capacity: cacheCapacity, timeToLive },
+  );
+
   const resolve: RepositoryIdentityResolver["Service"]["resolve"] = Effect.fnUntraced(
     function* (cwd, options) {
       if (options?.refresh) yield* Cache.invalidate(repositoryRootCache, cwd);
       const cacheKey = yield* Cache.get(repositoryRootCache, cwd);
-      if (cacheKey === null) return null;
-      if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
-      return yield* Cache.get(repositoryIdentityCache, cacheKey);
+      if (cacheKey !== null) {
+        if (options?.refresh) yield* Cache.invalidate(repositoryIdentityCache, cacheKey);
+        const gitIdentity = yield* Cache.get(repositoryIdentityCache, cacheKey);
+        if (gitIdentity !== null) return gitIdentity;
+      }
+      if (options?.refresh) yield* Cache.invalidate(projectFileIdentityCache, cwd);
+      return yield* Cache.get(projectFileIdentityCache, cwd);
     },
   );
 

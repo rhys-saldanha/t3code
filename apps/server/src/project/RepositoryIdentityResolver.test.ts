@@ -303,6 +303,58 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
+  it.effect("takes the identity of a folder git cannot identify from .t3.project", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const plainDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-project-file-plain-",
+      });
+      const noRemoteDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-project-file-no-remote-",
+      });
+      const realRemoteDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-project-file-real-remote-",
+      });
+      const invalidDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-repository-identity-project-file-invalid-",
+      });
+      const writeProjectFile = (dir: string, contents: string) =>
+        fileSystem.writeFileString(path.join(dir, ".t3.project"), contents);
+
+      yield* writeProjectFile(plainDir, '{"remote": "https://github.com/T3Tools/workspace.git"}');
+      yield* git(noRemoteDir, ["init"]);
+      yield* writeProjectFile(noRemoteDir, '{"remote": "git@github.com:T3Tools/workspace.git"}');
+      yield* git(realRemoteDir, ["init"]);
+      yield* git(realRemoteDir, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
+      yield* writeProjectFile(realRemoteDir, '{"remote": "https://github.com/T3Tools/other.git"}');
+      yield* writeProjectFile(invalidDir, '{"remote": "/srv/git/workspace.git"}');
+
+      const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      const plain = yield* resolver.resolve(plainDir);
+      const noRemote = yield* resolver.resolve(noRemoteDir);
+
+      expect(plain?.canonicalKey).toBe("github.com/t3tools/workspace");
+      expect(plain?.displayName).toBe("T3Tools/workspace");
+      expect(plain?.locator.remoteName).toBe("t3-project");
+      expect(plain?.rootPath).toBe(plainDir);
+      expect(noRemote?.canonicalKey).toBe("github.com/t3tools/workspace");
+      expect(noRemote?.canonicalKey).toBe(plain?.canonicalKey);
+      // Git wins, so a checkout never takes a locator its own remotes cannot back.
+      expect((yield* resolver.resolve(realRemoteDir))?.canonicalKey).toBe(
+        "github.com/t3tools/t3code",
+      );
+      expect(yield* resolver.resolve(invalidDir)).toBeNull();
+
+      yield* writeProjectFile(invalidDir, "not json");
+      expect(yield* resolver.resolve(invalidDir, { refresh: true })).toBeNull();
+      yield* writeProjectFile(invalidDir, '{"remote": "https://github.com/T3Tools/later.git"}');
+      expect((yield* resolver.resolve(invalidDir, { refresh: true }))?.canonicalKey).toBe(
+        "github.com/t3tools/later",
+      );
+    }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
+  );
+
   it.effect("uses the last remote path segment as the repository name for nested groups", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

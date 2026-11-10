@@ -242,6 +242,20 @@ When no image is found, web and desktop show a two-character monogram with a col
 from the icon palette, derived from the saved project name. For example, `Nebula` becomes `NA`,
 `Silver Orchard` becomes `SO`, and `M7 Forge` becomes `M7`.
 
+## Group folders that are not git repositories
+
+T3 Code groups the same project across environments by its git remote. A folder with no git
+repository, or no remote, stays separate on each machine. To group it anyway, add a `.t3.project`
+file to the folder on every machine:
+
+```json
+{ "remote": "https://github.com/owner/workspace.git" }
+```
+
+The remote does not have to be cloned or even exist; T3 Code only uses it to name the group. A
+folder whose git repository has its own remote keeps that remote, and `.t3.project` is ignored.
+A new file takes effect within a minute, and an edited one within 15 minutes.
+
 ## Keep the default branch current
 
 In Source control, enable **Automatically pull** to keep the default-branch checkout up to date
