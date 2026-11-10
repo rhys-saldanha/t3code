@@ -303,44 +303,40 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );
 
-  it.effect("takes the identity of a folder git cannot identify from .t3.project", () =>
+  it.effect("groups a folder git cannot identify by the name in .t3.project", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const plainDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-repository-identity-project-file-plain-",
-      });
-      const noRemoteDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-repository-identity-project-file-no-remote-",
-      });
-      const realRemoteDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-repository-identity-project-file-real-remote-",
-      });
-      const invalidDir = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-repository-identity-project-file-invalid-",
-      });
+      const makeDir = (prefix: string) =>
+        fileSystem.makeTempDirectoryScoped({
+          prefix: `t3-repository-identity-project-file-${prefix}-`,
+        });
+      const plainDir = yield* makeDir("plain");
+      const sameNameDir = yield* makeDir("same-name");
+      const realRemoteDir = yield* makeDir("real-remote");
+      const invalidDir = yield* makeDir("invalid");
       const writeProjectFile = (dir: string, contents: string) =>
         fileSystem.writeFileString(path.join(dir, ".t3.project"), contents);
 
-      yield* writeProjectFile(plainDir, '{"remote": "https://github.com/T3Tools/workspace.git"}');
-      yield* git(noRemoteDir, ["init"]);
-      yield* writeProjectFile(noRemoteDir, '{"remote": "git@github.com:T3Tools/workspace.git"}');
+      yield* writeProjectFile(plainDir, '{"name": "Extensions"}');
+      // A repository without remotes groups by the file too, and names compare case-insensitively.
+      yield* git(sameNameDir, ["init"]);
+      yield* writeProjectFile(sameNameDir, '{"name": "extensions"}');
       yield* git(realRemoteDir, ["init"]);
       yield* git(realRemoteDir, ["remote", "add", "origin", "git@github.com:T3Tools/t3code.git"]);
-      yield* writeProjectFile(realRemoteDir, '{"remote": "https://github.com/T3Tools/other.git"}');
-      yield* writeProjectFile(invalidDir, '{"remote": "/srv/git/workspace.git"}');
+      yield* writeProjectFile(realRemoteDir, '{"name": "extensions"}');
+      yield* writeProjectFile(invalidDir, '{"name": "   "}');
 
       const resolver = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
       const plain = yield* resolver.resolve(plainDir);
-      const noRemote = yield* resolver.resolve(noRemoteDir);
+      const sameName = yield* resolver.resolve(sameNameDir);
 
-      expect(plain?.canonicalKey).toBe("github.com/t3tools/workspace");
-      expect(plain?.displayName).toBe("T3Tools/workspace");
-      expect(plain?.locator.remoteName).toBe("t3-project");
+      expect(plain?.canonicalKey).toBe("t3-project/extensions");
+      expect(plain?.displayName).toBe("Extensions");
+      expect(plain?.provider).toBeUndefined();
       expect(plain?.rootPath).toBe(plainDir);
-      expect(noRemote?.canonicalKey).toBe("github.com/t3tools/workspace");
-      expect(noRemote?.canonicalKey).toBe(plain?.canonicalKey);
-      // Git wins, so a checkout never takes a locator its own remotes cannot back.
+      expect(sameName?.canonicalKey).toBe(plain?.canonicalKey);
+      // Git wins, so a checkout keeps an identity its own remotes can back.
       expect((yield* resolver.resolve(realRemoteDir))?.canonicalKey).toBe(
         "github.com/t3tools/t3code",
       );
@@ -348,9 +344,9 @@ it.layer(NodeServices.layer)("RepositoryIdentityResolverLive", (it) => {
 
       yield* writeProjectFile(invalidDir, "not json");
       expect(yield* resolver.resolve(invalidDir, { refresh: true })).toBeNull();
-      yield* writeProjectFile(invalidDir, '{"remote": "https://github.com/T3Tools/later.git"}');
+      yield* writeProjectFile(invalidDir, '{"name": "later"}');
       expect((yield* resolver.resolve(invalidDir, { refresh: true }))?.canonicalKey).toBe(
-        "github.com/t3tools/later",
+        "t3-project/later",
       );
     }).pipe(Effect.provide(RepositoryIdentityResolver.layer)),
   );

@@ -133,13 +133,13 @@ function buildRepositoryIdentity(input: {
   };
 }
 
-// A folder that git cannot identify (no repository, or no non-local remote) can declare the
-// remote it stands for in `.t3.project`, e.g. {"remote": "https://github.com/owner/repo.git"}.
-// Git always wins, so a real checkout never takes a locator its own remotes cannot back.
+// `.t3.project` names the group of a folder git cannot identify; git always wins. The locator is
+// a placeholder the wire schema requires: with no provider, nothing clones it or opens PRs on it.
 const PROJECT_FILE_NAME = ".t3.project";
 const PROJECT_FILE_REMOTE_NAME = "t3-project";
+const PROJECT_FILE_KEY_PREFIX = "t3-project/";
 const decodeProjectFile = Schema.decodeUnknownOption(
-  Schema.fromJsonString(Schema.Struct({ remote: Schema.String })),
+  Schema.fromJsonString(Schema.Struct({ name: Schema.String })),
 );
 
 const readProjectFileIdentity = Effect.fn("RepositoryIdentityResolver.readProjectFile")(function* (
@@ -154,15 +154,20 @@ const readProjectFileIdentity = Effect.fn("RepositoryIdentityResolver.readProjec
 
   const parsed = decodeProjectFile(contents.value);
   if (parsed._tag === "None") return null;
-  const remoteUrl = parsed.value.remote.trim();
-  if (remoteUrl.length === 0 || isLocalRemoteUrl(remoteUrl)) return null;
+  const name = parsed.value.name.trim();
+  if (name.length === 0) return null;
 
-  return buildRepositoryIdentity({
-    remoteName: PROJECT_FILE_REMOTE_NAME,
-    remoteUrl,
-    originUrl: undefined,
+  return {
+    canonicalKey: `${PROJECT_FILE_KEY_PREFIX}${name.toLowerCase()}`,
+    locator: {
+      source: "git-remote",
+      remoteName: PROJECT_FILE_REMOTE_NAME,
+      remoteUrl: `${PROJECT_FILE_REMOTE_NAME}:${name}`,
+    },
     rootPath: cwd,
-  });
+    displayName: name,
+    name,
+  } satisfies RepositoryIdentity;
 });
 
 class RepositoryIdentityCacheKey extends Data.Class<{

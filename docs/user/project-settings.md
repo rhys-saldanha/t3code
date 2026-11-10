@@ -246,15 +246,16 @@ from the icon palette, derived from the saved project name. For example, `Nebula
 
 T3 Code groups the same project across environments by its git remote. A folder with no git
 repository, or no remote, stays separate on each machine. To group it anyway, add a `.t3.project`
-file to the folder on every machine:
+file with the same name to the folder on every machine:
 
 ```json
-{ "remote": "https://github.com/owner/workspace.git" }
+{ "name": "workspace" }
 ```
 
-The remote does not have to be cloned or even exist; T3 Code only uses it to name the group. A
-folder whose git repository has its own remote keeps that remote, and `.t3.project` is ignored.
-A new file takes effect within a minute, and an edited one within 15 minutes.
+Names match regardless of case. A folder whose git repository has its own remote keeps that
+remote, and `.t3.project` is ignored. These groups are not repositories, so T3 Code offers no
+clone, pull request, or commit links for them. A new file takes effect within a minute, and an
+edited one within 15 minutes.
 
 ## Keep the default branch current
 
